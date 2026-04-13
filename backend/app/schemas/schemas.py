@@ -161,19 +161,19 @@ class ProductStockSummary(BaseModel):
 class MovementCreate(BaseModel):
     movement_type: MovementTypeEnum
     product_id: str
-    from_warehouse_id: Optional[str] = None
-    to_warehouse_id: Optional[str] = None
+    from_location_id: Optional[str] = None
+    to_location_id: Optional[str] = None
     quantity: Decimal
     reference_doc: Optional[str] = None
     notes: Optional[str] = None
-
-    @field_validator("from_warehouse_id", "to_warehouse_id", "reference_doc", "notes", mode="before")
+ 
+    @field_validator("from_location_id", "to_location_id", "reference_doc", "notes", mode="before")
     @classmethod
     def empty_str_to_none(cls, v):
         if v == "" or v == " ":
             return None
         return v
-
+ 
     @field_validator("quantity")
     @classmethod
     def qty_must_be_positive(cls, v):
@@ -181,23 +181,35 @@ class MovementCreate(BaseModel):
             raise ValueError("La cantidad debe ser mayor a cero")
         return v
 
+class LocationInMovement(BaseModel):
+    id: str
+    code: str
+    name: Optional[str]
+    warehouse_id: str
+    warehouse_name: Optional[str] = None  # se puebla desde el relationship
+ 
+    class Config:
+        from_attributes = True
+  
 
 class MovementOut(BaseModel):
     id: str
     movement_type: MovementTypeEnum
     product: ProductOut
-    from_warehouse: Optional[WarehouseOut]
-    to_warehouse: Optional[WarehouseOut]
+    from_location: Optional[LocationInMovement]
+    to_location: Optional[LocationInMovement]
     quantity: Decimal
     reference_doc: Optional[str]
     notes: Optional[str]
     performed_by_user: UserOut
     performed_at: datetime
     is_reversal: bool
-
+ 
     class Config:
         from_attributes = True
+ 
 
+ 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
 

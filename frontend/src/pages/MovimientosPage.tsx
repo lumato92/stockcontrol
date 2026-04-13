@@ -66,7 +66,8 @@ export default function MovimientosPage() {
 
   const { data: products } = useQuery<{ items: Product[] }>({
     queryKey: ['products-all'],
-    queryFn: () => api.get('/products/?size=200').then(r => r.data),
+    queryFn: () => api.get('/products/?size=500&is_active=true').then(r => r.data),
+    staleTime: 0,
   })
 
   const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<FormData>({
@@ -102,7 +103,15 @@ export default function MovimientosPage() {
 
   const onSubmit = (d: FormData) => {
     setError('')
-    createMut.mutate(d)
+    // Limpiar campos vacíos para que el backend reciba null en lugar de ""
+    const clean = {
+      ...d,
+      from_warehouse_id: d.from_warehouse_id || undefined,
+      to_warehouse_id: d.to_warehouse_id || undefined,
+      reference_doc: d.reference_doc || undefined,
+      notes: d.notes || undefined,
+    }
+    createMut.mutate(clean)
   }
 
   return (
@@ -245,8 +254,10 @@ export default function MovimientosPage() {
 
           <Field label="Producto" required error={errors.product_id?.message}>
             <Select {...register('product_id', { required: 'Requerido' })}>
-              <option value="">Seleccionar producto...</option>
-              {products?.items.map(p => (
+              <option value="">
+                {!products ? 'Cargando...' : products.items.length === 0 ? 'No hay productos activos' : 'Seleccionar producto...'}
+              </option>
+              {(products?.items ?? []).map(p => (
                 <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
               ))}
             </Select>

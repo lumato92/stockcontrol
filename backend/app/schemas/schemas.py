@@ -167,6 +167,13 @@ class MovementCreate(BaseModel):
     reference_doc: Optional[str] = None
     notes: Optional[str] = None
 
+    @field_validator("from_warehouse_id", "to_warehouse_id", "reference_doc", "notes", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v == "" or v == " ":
+            return None
+        return v
+
     @field_validator("quantity")
     @classmethod
     def qty_must_be_positive(cls, v):

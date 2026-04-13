@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
-from app.models.models import RoleEnum, MovementTypeEnum
+from app.models.models import RoleEnum, MovementTypeEnum ,LocationTypeEnum
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────

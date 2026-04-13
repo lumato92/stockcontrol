@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.session import get_db
-from app.api.v1.endpoints.deps import (
+from app.api.v1.deps import (
     get_current_user, require_admin_supervisor, require_operator_or_above
 )
 from app.models.models import (

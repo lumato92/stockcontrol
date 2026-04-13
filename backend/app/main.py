@@ -7,6 +7,7 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.products import router as products_router
 from app.api.v1.endpoints.stock import router_movements, router_stock, router_warehouses
 from app.api.v1.endpoints.users import router_users, router_categories, router_units
+from app.api.v1.endpoints.locations import router as locations_router
 
 app = FastAPI(
     title="StockControl API",
@@ -29,6 +30,7 @@ PREFIX = settings.API_V1_STR
 app.include_router(auth_router, prefix=f"{PREFIX}/auth", tags=["Autenticación"])
 app.include_router(products_router, prefix=f"{PREFIX}/products", tags=["Productos"])
 app.include_router(router_warehouses, prefix=f"{PREFIX}/warehouses", tags=["Depósitos"])
+app.include_router(locations_router, prefix=PREFIX, tags=["Ubicaciones"])
 app.include_router(router_stock, prefix=f"{PREFIX}/stock", tags=["Stock"])
 app.include_router(router_movements, prefix=f"{PREFIX}/movements", tags=["Movimientos"])
 app.include_router(router_users, prefix=f"{PREFIX}/users", tags=["Usuarios"])

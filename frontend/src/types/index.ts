@@ -72,8 +72,8 @@ export interface Movement {
   id: string
   movement_type: MovementType
   product: Product
-  from_warehouse: Warehouse | null
-  to_warehouse: Warehouse | null
+  from_warehouse: WarehouseLocation | null
+  to_warehouse: WarehouseLocation | null
   quantity: number
   reference_doc: string | null
   notes: string | null

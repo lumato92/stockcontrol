@@ -6,17 +6,17 @@ from datetime import datetime
 from decimal import Decimal
 from app.db.session import get_db
 from app.models.models import (
-    StockMovement, CurrentStock, Product, Warehouse, User, AuditLog,
-    MovementTypeEnum
+    StockMovement, CurrentStock, Product, Warehouse, WarehouseLocation,
+    User, AuditLog, MovementTypeEnum, LocationTypeEnum
 )
 from app.schemas.schemas import (
     MovementCreate, MovementOut, WarehouseCreate, WarehouseOut,
-    ProductStockSummary, PaginatedResponse
+    PaginatedResponse
 )
 from app.api.v1.deps import get_current_user, require_operator_or_above, require_admin_supervisor
 
 router_movements = APIRouter()
-router_stock = APIRouter()
+router_stock     = APIRouter()
 router_warehouses = APIRouter()
 
 
@@ -28,6 +28,18 @@ def list_warehouses(
     current_user: User = Depends(get_current_user),
 ):
     return db.query(Warehouse).filter(Warehouse.is_active == True).order_by(Warehouse.name).all()
+
+
+@router_warehouses.get("/{warehouse_id}", response_model=WarehouseOut)
+def get_warehouse(
+    warehouse_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Depósito no encontrado")
+    return wh
 
 
 @router_warehouses.post("/", response_model=WarehouseOut, status_code=201)
@@ -63,6 +75,48 @@ def update_warehouse(
     return wh
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _get_cell_or_404(location_id: str, db: Session) -> WarehouseLocation:
+    loc = db.query(WarehouseLocation).filter(
+        WarehouseLocation.id == location_id,
+        WarehouseLocation.is_active == True,
+    ).first()
+    if not loc:
+        raise HTTPException(status_code=404, detail=f"Ubicación {location_id} no encontrada")
+    if loc.location_type != LocationTypeEnum.cell:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La ubicación '{loc.code}' es de tipo '{loc.location_type.value}'. Solo las celdas (cell) pueden recibir stock."
+        )
+    return loc
+
+
+def _update_stock(db: Session, product_id: str, location_id: str, delta: Decimal):
+    entry = db.query(CurrentStock).filter(
+        CurrentStock.product_id == product_id,
+        CurrentStock.location_id == location_id,
+    ).first()
+
+    if entry:
+        new_qty = Decimal(str(entry.quantity)) + delta
+        if new_qty < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stock insuficiente en esta ubicación. Disponible: {entry.quantity}"
+            )
+        entry.quantity = new_qty
+        entry.last_updated = datetime.utcnow()
+    else:
+        if delta < 0:
+            raise HTTPException(status_code=400, detail="No hay stock registrado en esta ubicación")
+        db.add(CurrentStock(
+            product_id=product_id,
+            location_id=location_id,
+            quantity=delta,
+        ))
+
+
 # ── STOCK ─────────────────────────────────────────────────────────────────────
 
 @router_stock.get("/")
@@ -76,11 +130,11 @@ def get_stock(
     q = db.query(CurrentStock).options(
         joinedload(CurrentStock.product).joinedload(Product.category),
         joinedload(CurrentStock.product).joinedload(Product.unit),
-        joinedload(CurrentStock.warehouse),
+        joinedload(CurrentStock.location).joinedload(WarehouseLocation.warehouse),
     )
 
     if warehouse_id:
-        q = q.filter(CurrentStock.warehouse_id == warehouse_id)
+        q = q.join(WarehouseLocation).filter(WarehouseLocation.warehouse_id == warehouse_id)
     if category_id:
         q = q.join(Product).filter(Product.category_id == category_id)
     if status == "low":
@@ -96,21 +150,25 @@ def get_stock(
     result = []
     for e in entries:
         p = e.product
+        loc = e.location
         total = float(e.quantity)
         min_s = float(p.min_stock)
         st = "out" if total == 0 else ("low" if min_s > 0 and total <= min_s else "normal")
         result.append({
-            "product_id": p.id,
-            "product_name": p.name,
-            "sku": p.sku,
-            "barcode": p.barcode,
-            "category": p.category.name if p.category else None,
-            "unit": p.unit.symbol,
-            "warehouse_id": e.warehouse_id,
-            "warehouse_name": e.warehouse.name,
-            "quantity": total,
-            "min_stock": min_s,
-            "status": st,
+            "product_id":     p.id,
+            "product_name":   p.name,
+            "sku":            p.sku,
+            "barcode":        p.barcode,
+            "category":       p.category.name if p.category else None,
+            "unit":           p.unit.symbol,
+            "location_id":    loc.id,
+            "location_code":  loc.code,
+            "location_name":  loc.name,
+            "warehouse_id":   loc.warehouse_id,
+            "warehouse_name": loc.warehouse.name,
+            "quantity":       total,
+            "min_stock":      min_s,
+            "status":         st,
         })
 
     return result
@@ -121,7 +179,7 @@ def stock_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    total_products = db.query(Product).filter(Product.is_active == True).count()
+    total_products   = db.query(Product).filter(Product.is_active == True).count()
     total_warehouses = db.query(Warehouse).filter(Warehouse.is_active == True).count()
 
     low_stock = db.query(func.count()).select_from(CurrentStock).join(Product).filter(
@@ -139,9 +197,9 @@ def stock_summary(
     ).filter(CurrentStock.product_id == None).count()
 
     return {
-        "total_products": total_products,
-        "total_warehouses": total_warehouses,
-        "low_stock_count": low_stock,
+        "total_products":    total_products,
+        "total_warehouses":  total_warehouses,
+        "low_stock_count":   low_stock,
         "out_of_stock_count": out_of_stock + products_no_stock,
     }
 
@@ -153,38 +211,12 @@ def _load_movement(movement_id: str, db: Session) -> StockMovement:
         joinedload(StockMovement.product).joinedload(Product.category),
         joinedload(StockMovement.product).joinedload(Product.unit),
         joinedload(StockMovement.performed_by_user),
-        joinedload(StockMovement.from_warehouse),
-        joinedload(StockMovement.to_warehouse),
+        joinedload(StockMovement.from_location).joinedload(WarehouseLocation.warehouse),
+        joinedload(StockMovement.to_location).joinedload(WarehouseLocation.warehouse),
     ).filter(StockMovement.id == movement_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="Movimiento no encontrado")
     return m
-
-
-def _update_stock(db: Session, product_id: str, warehouse_id: str, delta: Decimal):
-    """Actualiza o crea el stock para un producto en un depósito."""
-    entry = db.query(CurrentStock).filter(
-        CurrentStock.product_id == product_id,
-        CurrentStock.warehouse_id == warehouse_id,
-    ).first()
-
-    if entry:
-        new_qty = Decimal(str(entry.quantity)) + delta
-        if new_qty < 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Stock insuficiente. Disponible: {entry.quantity}"
-            )
-        entry.quantity = new_qty
-        entry.last_updated = datetime.utcnow()
-    else:
-        if delta < 0:
-            raise HTTPException(status_code=400, detail="No hay stock registrado en este depósito")
-        db.add(CurrentStock(
-            product_id=product_id,
-            warehouse_id=warehouse_id,
-            quantity=delta,
-        ))
 
 
 @router_movements.post("/", response_model=MovementOut, status_code=201)
@@ -193,47 +225,42 @@ def create_movement(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_operator_or_above),
 ):
-    # Validar producto
     product = db.query(Product).filter(Product.id == body.product_id, Product.is_active == True).first()
     if not product:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    # Validar depósitos según tipo
     if body.movement_type == MovementTypeEnum.entrada:
-        if not body.to_warehouse_id:
-            raise HTTPException(status_code=400, detail="Entrada requiere depósito destino")
-        if not db.query(Warehouse).filter(Warehouse.id == body.to_warehouse_id).first():
-            raise HTTPException(status_code=404, detail="Depósito destino no encontrado")
-        _update_stock(db, body.product_id, body.to_warehouse_id, body.quantity)
+        if not body.to_location_id:
+            raise HTTPException(status_code=400, detail="Entrada requiere ubicación destino")
+        _get_cell_or_404(body.to_location_id, db)
+        _update_stock(db, body.product_id, body.to_location_id, body.quantity)
 
     elif body.movement_type == MovementTypeEnum.salida:
-        if not body.from_warehouse_id:
-            raise HTTPException(status_code=400, detail="Salida requiere depósito origen")
-        _update_stock(db, body.product_id, body.from_warehouse_id, -body.quantity)
+        if not body.from_location_id:
+            raise HTTPException(status_code=400, detail="Salida requiere ubicación origen")
+        _get_cell_or_404(body.from_location_id, db)
+        _update_stock(db, body.product_id, body.from_location_id, -body.quantity)
 
     elif body.movement_type == MovementTypeEnum.transferencia:
-        if not body.from_warehouse_id or not body.to_warehouse_id:
+        if not body.from_location_id or not body.to_location_id:
             raise HTTPException(status_code=400, detail="Transferencia requiere origen y destino")
-        if body.from_warehouse_id == body.to_warehouse_id:
-            raise HTTPException(status_code=400, detail="Origen y destino no pueden ser el mismo")
-        _update_stock(db, body.product_id, body.from_warehouse_id, -body.quantity)
-        _update_stock(db, body.product_id, body.to_warehouse_id, body.quantity)
+        if body.from_location_id == body.to_location_id:
+            raise HTTPException(status_code=400, detail="Origen y destino no pueden ser la misma ubicación")
+        _get_cell_or_404(body.from_location_id, db)
+        _get_cell_or_404(body.to_location_id, db)
+        _update_stock(db, body.product_id, body.from_location_id, -body.quantity)
+        _update_stock(db, body.product_id, body.to_location_id, body.quantity)
 
     elif body.movement_type == MovementTypeEnum.ajuste:
-        if not body.to_warehouse_id:
-            raise HTTPException(status_code=400, detail="Ajuste requiere depósito")
+        if not body.to_location_id:
+            raise HTTPException(status_code=400, detail="Ajuste requiere ubicación")
         if not body.notes:
             raise HTTPException(status_code=400, detail="Los ajustes requieren una nota explicativa")
-        # El ajuste puede ser positivo o negativo pero la quantity es siempre positiva
-        # Se usa la nota para indicar el sentido
-        _update_stock(db, body.product_id, body.to_warehouse_id, body.quantity)
+        _get_cell_or_404(body.to_location_id, db)
+        _update_stock(db, body.product_id, body.to_location_id, body.quantity)
 
-    movement = StockMovement(
-        **body.model_dump(),
-        performed_by=current_user.id,
-    )
+    movement = StockMovement(**body.model_dump(), performed_by=current_user.id)
     db.add(movement)
-
     log = AuditLog(
         user_id=current_user.id, action="MOVEMENT",
         table_name="stock_movements",
@@ -258,16 +285,20 @@ def list_movements(
         joinedload(StockMovement.product).joinedload(Product.category),
         joinedload(StockMovement.product).joinedload(Product.unit),
         joinedload(StockMovement.performed_by_user),
-        joinedload(StockMovement.from_warehouse),
-        joinedload(StockMovement.to_warehouse),
+        joinedload(StockMovement.from_location).joinedload(WarehouseLocation.warehouse),
+        joinedload(StockMovement.to_location).joinedload(WarehouseLocation.warehouse),
     )
 
     if product_id:
         q = q.filter(StockMovement.product_id == product_id)
     if warehouse_id:
+        # Filtra movimientos donde alguna de las ubicaciones pertenece al depósito
+        from_locs = db.query(WarehouseLocation.id).filter(
+            WarehouseLocation.warehouse_id == warehouse_id
+        ).subquery()
         q = q.filter(
-            (StockMovement.from_warehouse_id == warehouse_id) |
-            (StockMovement.to_warehouse_id == warehouse_id)
+            (StockMovement.from_location_id.in_(from_locs)) |
+            (StockMovement.to_location_id.in_(from_locs))
         )
     if movement_type:
         q = q.filter(StockMovement.movement_type == movement_type)
@@ -295,34 +326,32 @@ def reverse_movement(
     if original.is_reversal:
         raise HTTPException(status_code=400, detail="No se puede revertir una reversión")
 
-    # Crear movimiento inverso
     reversal_type = {
-        MovementTypeEnum.entrada: MovementTypeEnum.salida,
-        MovementTypeEnum.salida: MovementTypeEnum.entrada,
+        MovementTypeEnum.entrada:       MovementTypeEnum.salida,
+        MovementTypeEnum.salida:        MovementTypeEnum.entrada,
         MovementTypeEnum.transferencia: MovementTypeEnum.transferencia,
-        MovementTypeEnum.ajuste: MovementTypeEnum.ajuste,
+        MovementTypeEnum.ajuste:        MovementTypeEnum.ajuste,
     }.get(original.movement_type, original.movement_type)
 
     reversal = StockMovement(
-        movement_type=reversal_type,
-        product_id=original.product_id,
-        from_warehouse_id=original.to_warehouse_id,
-        to_warehouse_id=original.from_warehouse_id,
-        quantity=original.quantity,
-        notes=f"REVERSIÓN de movimiento {movement_id}. Motivo: {notes}",
-        performed_by=current_user.id,
-        is_reversal=True,
-        reversed_movement_id=movement_id,
+        movement_type        = reversal_type,
+        product_id           = original.product_id,
+        from_location_id     = original.to_location_id,
+        to_location_id       = original.from_location_id,
+        quantity             = original.quantity,
+        notes                = f"REVERSIÓN de movimiento {movement_id}. Motivo: {notes}",
+        performed_by         = current_user.id,
+        is_reversal          = True,
+        reversed_movement_id = movement_id,
     )
 
-    # Actualizar stock
-    if reversal_type == MovementTypeEnum.salida and original.to_warehouse_id:
-        _update_stock(db, original.product_id, original.to_warehouse_id, -original.quantity)
-    elif reversal_type == MovementTypeEnum.entrada and original.from_warehouse_id:
-        _update_stock(db, original.product_id, original.from_warehouse_id, original.quantity)
+    if reversal_type == MovementTypeEnum.salida and original.to_location_id:
+        _update_stock(db, original.product_id, original.to_location_id, -original.quantity)
+    elif reversal_type == MovementTypeEnum.entrada and original.from_location_id:
+        _update_stock(db, original.product_id, original.from_location_id, original.quantity)
     elif reversal_type == MovementTypeEnum.transferencia:
-        _update_stock(db, original.product_id, original.to_warehouse_id, -original.quantity)
-        _update_stock(db, original.product_id, original.from_warehouse_id, original.quantity)
+        _update_stock(db, original.product_id, original.to_location_id, -original.quantity)
+        _update_stock(db, original.product_id, original.from_location_id, original.quantity)
 
     db.add(reversal)
     log = AuditLog(user_id=current_user.id, action="REVERSE", table_name="stock_movements",

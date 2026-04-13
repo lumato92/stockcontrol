@@ -10,7 +10,7 @@ import {
 import { formatDate, formatQty, MOVEMENT_LABELS, canWrite } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { Plus, RotateCcw } from 'lucide-react'
-import type { Movement, Product, Warehouse, PaginatedResponse } from '@/types'
+import type { Movement, Product, Warehouse, PaginatedResponse, WarehouseLocation } from '@/types'
 import { cn } from '@/lib/utils'
 
 type MovType = 'entrada' | 'salida' | 'transferencia' | 'ajuste'
@@ -18,8 +18,8 @@ type MovType = 'entrada' | 'salida' | 'transferencia' | 'ajuste'
 type FormData = {
   movement_type: MovType
   product_id: string
-  from_warehouse_id?: string
-  to_warehouse_id?: string
+  from_location_id?: string
+  to_location_id?: string
   quantity: number
   reference_doc?: string
   notes?: string
@@ -31,6 +31,71 @@ const MOV_COLORS: Record<string, string> = {
   transferencia: 'badge-transferencia',
   ajuste: 'badge-ajuste',
   devolucion: 'badge-ajuste',
+}
+
+// Selector depósito → celda
+function LocationPicker({
+  label,
+  required,
+  warehouses,
+  fieldName,
+  register,
+  error,
+}: {
+  label: string
+  required: boolean
+  warehouses: Warehouse[] | undefined
+  fieldName: 'from_location_id' | 'to_location_id'
+  register: any
+  error?: string
+}) {
+  const [warehouseId, setWarehouseId] = useState('')
+
+  const { data: locations, isLoading } = useQuery<WarehouseLocation[]>({
+    queryKey: ['locations', warehouseId],
+    queryFn: () => api.get(`/warehouses/${warehouseId}/locations`).then(r => r.data),
+    enabled: !!warehouseId,
+  })
+
+  const cells = locations?.filter(l => l.location_type === 'cell' && l.is_active) ?? []
+
+  return (
+    <div className="space-y-2">
+      <Field label={label} required={required} error={error}>
+        {/* Paso 1: depósito */}
+        <select
+          className="input mb-2"
+          value={warehouseId}
+          onChange={e => setWarehouseId(e.target.value)}
+        >
+          <option value="">Seleccionar depósito...</option>
+          {warehouses?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+
+        {/* Paso 2: celda */}
+        {warehouseId && (
+          isLoading ? (
+            <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
+              <Spinner size={12} /> Cargando ubicaciones...
+            </div>
+          ) : cells.length === 0 ? (
+            <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+              Este depósito no tiene celdas activas. Configurá ubicaciones primero.
+            </p>
+          ) : (
+            <Select {...register(fieldName, { required: required ? 'Requerido' : false })}>
+              <option value="">Seleccionar celda...</option>
+              {cells.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.code}{c.name ? ` — ${c.name}` : ''}
+                </option>
+              ))}
+            </Select>
+          )
+        )}
+      </Field>
+    </div>
+  )
 }
 
 export default function MovimientosPage() {
@@ -103,13 +168,12 @@ export default function MovimientosPage() {
 
   const onSubmit = (d: FormData) => {
     setError('')
-    // Limpiar campos vacíos para que el backend reciba null en lugar de ""
     const clean = {
       ...d,
-      from_warehouse_id: d.from_warehouse_id || undefined,
-      to_warehouse_id: d.to_warehouse_id || undefined,
-      reference_doc: d.reference_doc || undefined,
-      notes: d.notes || undefined,
+      from_location_id: d.from_location_id || undefined,
+      to_location_id:   d.to_location_id   || undefined,
+      reference_doc:    d.reference_doc    || undefined,
+      notes:            d.notes            || undefined,
     }
     createMut.mutate(clean)
   }
@@ -191,10 +255,18 @@ export default function MovimientosPage() {
                       <div className="text-xs text-slate-400 font-mono">{m.product.sku}</div>
                     </td>
                     <td className="px-4 py-3 text-slate-600 text-xs">
-                      {m.from_warehouse && <span>{m.from_warehouse.name}</span>}
-                      {m.from_warehouse && m.to_warehouse && <span className="mx-1.5 text-slate-300">→</span>}
-                      {m.to_warehouse && <span>{m.to_warehouse.name}</span>}
-                      {!m.from_warehouse && !m.to_warehouse && <span className="text-slate-400">—</span>}
+                      {m.from_location && (
+                        <span className="font-mono">{m.from_location.code}</span>
+                      )}
+                      {m.from_location && m.to_location && (
+                        <span className="mx-1.5 text-slate-300">→</span>
+                      )}
+                      {m.to_location && (
+                        <span className="font-mono">{m.to_location.code}</span>
+                      )}
+                      {!m.from_location && !m.to_location && (
+                        <span className="text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold">
                       {formatQty(m.quantity, m.product.unit.symbol)}
@@ -214,7 +286,6 @@ export default function MovimientosPage() {
                           <button
                             className="btn-secondary py-1 px-2 text-xs"
                             onClick={() => { setReverseTarget(m); setReverseNotes(''); setError('') }}
-                            title="Revertir este movimiento"
                           >
                             <RotateCcw size={11} /> Revertir
                           </button>
@@ -255,7 +326,9 @@ export default function MovimientosPage() {
           <Field label="Producto" required error={errors.product_id?.message}>
             <Select {...register('product_id', { required: 'Requerido' })}>
               <option value="">
-                {!products ? 'Cargando...' : products.items.length === 0 ? 'No hay productos activos' : 'Seleccionar producto...'}
+                {!products ? 'Cargando...' : products.items.length === 0
+                  ? 'No hay productos activos'
+                  : 'Seleccionar producto...'}
               </option>
               {(products?.items ?? []).map(p => (
                 <option key={p.id} value={p.id}>{p.name} ({p.sku})</option>
@@ -264,21 +337,25 @@ export default function MovimientosPage() {
           </Field>
 
           {(movType === 'salida' || movType === 'transferencia') && (
-            <Field label="Depósito origen" required error={errors.from_warehouse_id?.message}>
-              <Select {...register('from_warehouse_id', { required: 'Requerido' })}>
-                <option value="">Seleccionar...</option>
-                {warehouses?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </Select>
-            </Field>
+            <LocationPicker
+              label="Ubicación origen"
+              required
+              warehouses={warehouses}
+              fieldName="from_location_id"
+              register={register}
+              error={errors.from_location_id?.message}
+            />
           )}
 
           {(movType === 'entrada' || movType === 'transferencia' || movType === 'ajuste') && (
-            <Field label="Depósito destino" required error={errors.to_warehouse_id?.message}>
-              <Select {...register('to_warehouse_id', { required: 'Requerido' })}>
-                <option value="">Seleccionar...</option>
-                {warehouses?.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </Select>
-            </Field>
+            <LocationPicker
+              label="Ubicación destino"
+              required
+              warehouses={warehouses}
+              fieldName="to_location_id"
+              register={register}
+              error={errors.to_location_id?.message}
+            />
           )}
 
           <Field label="Cantidad" required error={errors.quantity?.message}>
@@ -286,7 +363,11 @@ export default function MovimientosPage() {
               type="number"
               step="0.001"
               min="0.001"
-              {...register('quantity', { required: 'Requerido', valueAsNumber: true, min: { value: 0.001, message: 'Debe ser mayor a 0' } })}
+              {...register('quantity', {
+                required: 'Requerido',
+                valueAsNumber: true,
+                min: { value: 0.001, message: 'Debe ser mayor a 0' },
+              })}
               placeholder="0"
             />
           </Field>
@@ -297,7 +378,9 @@ export default function MovimientosPage() {
 
           <Field label={movType === 'ajuste' ? 'Motivo del ajuste (requerido)' : 'Notas'}>
             <Textarea
-              {...register('notes', { required: movType === 'ajuste' ? 'Los ajustes requieren una nota' : false })}
+              {...register('notes', {
+                required: movType === 'ajuste' ? 'Los ajustes requieren una nota' : false,
+              })}
               placeholder={movType === 'ajuste' ? 'Explicá el motivo del ajuste...' : 'Notas opcionales...'}
             />
           </Field>

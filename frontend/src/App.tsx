@@ -10,6 +10,7 @@ import MovimientosPage from '@/pages/MovimientosPage'
 import DepositosPage from '@/pages/DepositosPage'
 import UsersPage from '@/pages/UsersPage'
 import { Spinner } from '@/components/ui'
+import WarehouseDetailPage from '@/pages/WarehouseDetailPage'
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="/stock" element={<StockPage />} />
               <Route path="/movimientos" element={<MovimientosPage />} />
               <Route element={<SupervisorOnly />}>
+                <Route path="/depositos/:id" element={<WarehouseDetailPage />} />
                 <Route path="/depositos" element={<DepositosPage />} />
               </Route>
               <Route element={<AdminOnly />}>

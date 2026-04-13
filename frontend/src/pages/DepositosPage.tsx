@@ -1,32 +1,35 @@
+spage · TSX
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { api } from '@/lib/api'
 import { PageHeader, LoadingScreen, Empty, Modal, Field, Input, Textarea, Alert, Spinner } from '@/components/ui'
 import { Plus, Pencil, Warehouse } from 'lucide-react'
 import type { Warehouse as WHType } from '@/types'
-
+ 
 type FormData = { name: string; address?: string }
-
+ 
 export default function DepositosPage() {
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
   const [editWH, setEditWH] = useState<WHType | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-
+ 
   const { data: warehouses, isLoading } = useQuery<WHType[]>({
     queryKey: ['warehouses'],
     queryFn: () => api.get('/warehouses/').then(r => r.data),
   })
-
+ 
   const { data: stock } = useQuery<any[]>({
     queryKey: ['stock'],
     queryFn: () => api.get('/stock/').then(r => r.data),
   })
-
+ 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>()
-
+ 
   const createMut = useMutation({
     mutationFn: (d: FormData) => api.post('/warehouses/', d),
     onSuccess: () => {
@@ -35,7 +38,7 @@ export default function DepositosPage() {
     },
     onError: (e: any) => setError(e?.response?.data?.detail ?? 'Error'),
   })
-
+ 
   const updateMut = useMutation({
     mutationFn: ({ id, ...d }: FormData & { id: string }) => api.put(`/warehouses/${id}`, d),
     onSuccess: () => {
@@ -44,27 +47,27 @@ export default function DepositosPage() {
     },
     onError: (e: any) => setError(e?.response?.data?.detail ?? 'Error'),
   })
-
+ 
   const openCreate = () => { setEditWH(null); reset(); setError(''); setModalOpen(true) }
   const openEdit = (w: WHType) => {
     setEditWH(w)
     reset({ name: w.name, address: w.address ?? '' })
     setError(''); setModalOpen(true)
   }
-
+ 
   const onSubmit = (d: FormData) => {
     if (editWH) updateMut.mutate({ ...d, id: editWH.id })
     else createMut.mutate(d)
   }
-
+ 
   const saving = createMut.isPending || updateMut.isPending
-
+ 
   const stockByWarehouse = (whId: string) => {
     const items = stock?.filter(s => s.warehouse_id === whId) ?? []
     const low = items.filter(s => s.status === 'low' || s.status === 'out').length
     return { total: items.length, low }
   }
-
+ 
   return (
     <div className="flex-1 p-6 overflow-y-auto">
       <PageHeader
@@ -76,9 +79,9 @@ export default function DepositosPage() {
           </button>
         }
       />
-
+ 
       {success && <Alert type="success" message={success} onClose={() => setSuccess('')} className="mb-4" />}
-
+ 
       {isLoading ? <LoadingScreen /> : !warehouses?.length ? (
         <Empty message="No hay depósitos configurados" />
       ) : (
@@ -86,14 +89,18 @@ export default function DepositosPage() {
           {warehouses.map(w => {
             const { total, low } = stockByWarehouse(w.id)
             return (
-              <div key={w.id} className="card p-5">
+              <div
+                key={w.id}
+                className="card p-5 cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => navigate(`/depositos/${w.id}`)}
+              >
                 <div className="flex items-start justify-between mb-3">
                   <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
                     <Warehouse size={18} className="text-blue-600" />
                   </div>
                   <button
                     className="btn-secondary py-1 px-2 text-xs"
-                    onClick={() => openEdit(w)}
+                    onClick={(e) => { e.stopPropagation(); openEdit(w) }}
                   >
                     <Pencil size={11} /> Editar
                   </button>
@@ -122,7 +129,7 @@ export default function DepositosPage() {
           })}
         </div>
       )}
-
+ 
       <Modal
         open={modalOpen}
         onClose={() => { setModalOpen(false); setError('') }}
@@ -148,3 +155,4 @@ export default function DepositosPage() {
     </div>
   )
 }
+ 

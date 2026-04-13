@@ -8,12 +8,19 @@ import {
 } from '@/components/ui'
 import { formatCurrency, canWrite } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
-import { Plus, Search, Pencil, ToggleLeft, ToggleRight, ScanLine } from 'lucide-react'
-import type { Product, Category, Unit, PaginatedResponse } from '@/types'
+import { Plus, Search, Pencil, ToggleLeft, ToggleRight, ScanLine, ChevronDown, X } from 'lucide-react'
+import type { Product, Category, Unit, PaginatedResponse, ProductUnitConversion } from '@/types'
+
+type DispatchRule = 'FIFO' | 'FEFO' | 'LIFO'
 
 type FormData = {
   sku: string; name: string; barcode?: string; description?: string
   category_id?: number; unit_id: number; min_stock: number; cost_price?: number
+  // Avanzados
+  weight_kg?: number; length_cm?: number; width_cm?: number; height_cm?: number
+  track_batches?: boolean; track_serial?: boolean; has_expiry?: boolean; expiry_alert_days?: number
+  requires_cold?: boolean; is_fragile?: boolean; is_stackable?: boolean; is_hazardous?: boolean
+  dispatch_rule?: DispatchRule
 }
 
 export default function ProductsPage() {
@@ -27,6 +34,10 @@ export default function ProductsPage() {
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [newConv, setNewConv] = useState<{ from_unit_id: string; to_unit_id: string; factor: string }>({
+    from_unit_id: '', to_unit_id: '', factor: ''
+  })
 
   const { data, isLoading } = useQuery<PaginatedResponse<Product>>({
     queryKey: ['products', search, categoryId, statusFilter, page],
@@ -48,6 +59,12 @@ export default function ProductsPage() {
   const { data: units } = useQuery<Unit[]>({
     queryKey: ['units'],
     queryFn: () => api.get('/units/').then(r => r.data),
+  })
+
+  const { data: conversions } = useQuery<ProductUnitConversion[]>({
+    queryKey: ['conversions', editProduct?.id],
+    queryFn: () => api.get(`/products/${editProduct!.id}/conversions`).then(r => r.data),
+    enabled: !!editProduct,
   })
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormData>()
@@ -76,15 +93,58 @@ export default function ProductsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
   })
 
-  const openCreate = () => { setEditProduct(null); reset(); setError(''); setModalOpen(true) }
+  const addConvMut = useMutation({
+    mutationFn: (d: { from_unit_id: number; to_unit_id: number; factor: number }) =>
+      api.post(`/products/${editProduct!.id}/conversions`, d),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversions', editProduct?.id] }),
+    onError: (e: any) => setError(e?.response?.data?.detail ?? 'Error al agregar conversión'),
+  })
+
+  const deleteConvMut = useMutation({
+    mutationFn: (convId: number) =>
+      api.delete(`/products/${editProduct!.id}/conversions/${convId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversions', editProduct?.id] }),
+  })
+
+  const resetModal = () => {
+    setModalOpen(false)
+    setError('')
+    setAdvancedOpen(false)
+    setNewConv({ from_unit_id: '', to_unit_id: '', factor: '' })
+  }
+
+  const openCreate = () => {
+    setEditProduct(null)
+    reset()
+    resetModal()
+    setModalOpen(true)
+  }
+
   const openEdit = (p: Product) => {
     setEditProduct(p)
     reset({
       sku: p.sku, name: p.name, barcode: p.barcode ?? '', description: p.description ?? '',
       category_id: p.category?.id, unit_id: p.unit.id,
       min_stock: Number(p.min_stock), cost_price: p.cost_price ? Number(p.cost_price) : undefined,
+      // Avanzados
+      weight_kg:         (p as any).weight_kg         ? Number((p as any).weight_kg)    : undefined,
+      length_cm:         (p as any).length_cm         ? Number((p as any).length_cm)    : undefined,
+      width_cm:          (p as any).width_cm          ? Number((p as any).width_cm)     : undefined,
+      height_cm:         (p as any).height_cm         ? Number((p as any).height_cm)    : undefined,
+      track_batches:     (p as any).track_batches     ?? false,
+      track_serial:      (p as any).track_serial      ?? false,
+      has_expiry:        (p as any).has_expiry        ?? false,
+      expiry_alert_days: (p as any).expiry_alert_days ?? undefined,
+      requires_cold:     (p as any).requires_cold     ?? false,
+      is_fragile:        (p as any).is_fragile        ?? false,
+      is_stackable:      (p as any).is_stackable      ?? true,
+      is_hazardous:      (p as any).is_hazardous      ?? false,
+      dispatch_rule:     (p as any).dispatch_rule     ?? 'FIFO',
     })
-    setError(''); setModalOpen(true)
+    setError('')
+    setAdvancedOpen(false)
+    setNewConv({ from_unit_id: '', to_unit_id: '', factor: '' })
+    setModalOpen(true)
   }
 
   const onSubmit = (d: FormData) => {
@@ -224,7 +284,7 @@ export default function ProductsPage() {
       {/* Create/Edit Modal */}
       <Modal
         open={modalOpen}
-        onClose={() => { setModalOpen(false); setError('') }}
+        onClose={resetModal}
         title={editProduct ? 'Editar producto' : 'Nuevo producto'}
         size="lg"
       >
@@ -265,9 +325,7 @@ export default function ProductsPage() {
             </Field>
             <Field label="Stock mínimo">
               <Input
-                type="number"
-                step="0.001"
-                min="0"
+                type="number" step="0.001" min="0"
                 {...register('min_stock', { valueAsNumber: true })}
                 placeholder="0"
               />
@@ -277,9 +335,7 @@ export default function ProductsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Precio de costo">
               <Input
-                type="number"
-                step="0.01"
-                min="0"
+                type="number" step="0.01" min="0"
                 {...register('cost_price', { valueAsNumber: true })}
                 placeholder="0.00"
               />
@@ -290,8 +346,170 @@ export default function ProductsPage() {
             <Textarea {...register('description')} placeholder="Descripción opcional del producto..." />
           </Field>
 
+          {/* Campos avanzados colapsable */}
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen(o => !o)}
+              className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 transition-colors"
+            >
+              Campos avanzados — dimensiones, trazabilidad, restricciones
+              <ChevronDown size={14} className={`transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {advancedOpen && (
+              <div className="p-4 space-y-4">
+                {/* Dimensiones */}
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Dimensiones físicas</p>
+                <div className="grid grid-cols-4 gap-3">
+                  {([
+                    ['weight_kg', 'Peso (kg)'],
+                    ['length_cm', 'Largo (cm)'],
+                    ['width_cm',  'Ancho (cm)'],
+                    ['height_cm', 'Alto (cm)'],
+                  ] as const).map(([f, label]) => (
+                    <Field key={f} label={label}>
+                      <Input type="number" step="0.001" min="0" {...register(f, { valueAsNumber: true })} placeholder="0" />
+                    </Field>
+                  ))}
+                </div>
+
+                {/* Trazabilidad */}
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Trazabilidad</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('track_batches')} className="rounded" /> Maneja lotes
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('track_serial')} className="rounded" /> Maneja número de serie
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('has_expiry')} className="rounded" /> Tiene vencimiento
+                  </label>
+                  <Field label="Días alerta vencimiento">
+                    <Input type="number" min="0" {...register('expiry_alert_days', { valueAsNumber: true })} placeholder="30" />
+                  </Field>
+                </div>
+
+                {/* Restricciones */}
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Almacenamiento</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('requires_cold')} className="rounded" /> Requiere frío
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('is_fragile')} className="rounded" /> Frágil
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('is_hazardous')} className="rounded" /> Material peligroso
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" {...register('is_stackable')} className="rounded" /> Apilable
+                  </label>
+                </div>
+
+                {/* Despacho */}
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Regla de despacho</p>
+                <Field label="Método" className="w-48">
+                  <Select {...register('dispatch_rule')}>
+                    <option value="FIFO">FIFO — Primero en entrar</option>
+                    <option value="FEFO">FEFO — Primero en vencer</option>
+                    <option value="LIFO">LIFO — Último en entrar</option>
+                  </Select>
+                </Field>
+              </div>
+            )}
+          </div>
+
+          {/* Subpanel conversiones — solo en edición */}
+          {editProduct && (
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                <span className="text-sm font-medium text-slate-600">Conversiones de unidad</span>
+                <span className="text-xs text-slate-400">{conversions?.length ?? 0} definidas</span>
+              </div>
+
+              <div className="p-4 space-y-3">
+                {!conversions?.length ? (
+                  <p className="text-xs text-slate-400 text-center py-2">
+                    Sin conversiones. Ej: 1 caja = 12 unidades.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {conversions.map(c => (
+                      <div key={c.id} className="flex items-center gap-2 text-sm bg-slate-50 rounded-lg px-3 py-2">
+                        <span className="text-slate-500">1</span>
+                        <span className="font-medium text-slate-700">
+                          {units?.find(u => u.id === c.from_unit_id)?.name ?? c.from_unit_id}
+                        </span>
+                        <span className="text-slate-400">=</span>
+                        <span className="font-mono font-semibold text-slate-800">{Number(c.factor)}</span>
+                        <span className="font-medium text-slate-700">
+                          {units?.find(u => u.id === c.to_unit_id)?.name ?? c.to_unit_id}
+                        </span>
+                        <button
+                          type="button"
+                          className="ml-auto text-slate-300 hover:text-red-400 transition-colors"
+                          onClick={() => deleteConvMut.mutate(c.id)}
+                          title="Eliminar"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Nueva conversión */}
+                <div className="flex items-end gap-2 pt-2 border-t border-slate-100">
+                  <Field label="De unidad" className="flex-1">
+                    <Select
+                      value={newConv.from_unit_id}
+                      onChange={e => setNewConv(p => ({ ...p, from_unit_id: e.target.value }))}
+                    >
+                      <option value="">Unidad...</option>
+                      {units?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </Select>
+                  </Field>
+                  <Field label="Factor" className="w-24">
+                    <Input
+                      type="number" step="0.000001" min="0.000001"
+                      placeholder="12"
+                      value={newConv.factor}
+                      onChange={e => setNewConv(p => ({ ...p, factor: e.target.value }))}
+                    />
+                  </Field>
+                  <Field label="A unidad" className="flex-1">
+                    <Select
+                      value={newConv.to_unit_id}
+                      onChange={e => setNewConv(p => ({ ...p, to_unit_id: e.target.value }))}
+                    >
+                      <option value="">Unidad...</option>
+                      {units?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                    </Select>
+                  </Field>
+                  <button
+                    type="button"
+                    className="btn-primary py-1.5 px-3 mb-0.5 flex-shrink-0"
+                    disabled={!newConv.from_unit_id || !newConv.to_unit_id || !newConv.factor || addConvMut.isPending}
+                    onClick={() => {
+                      addConvMut.mutate({
+                        from_unit_id: Number(newConv.from_unit_id),
+                        to_unit_id:   Number(newConv.to_unit_id),
+                        factor:       Number(newConv.factor),
+                      })
+                      setNewConv({ from_unit_id: '', to_unit_id: '', factor: '' })
+                    }}
+                  >
+                    {addConvMut.isPending ? <Spinner size={12} className="text-white" /> : <Plus size={13} />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button type="button" className="btn-secondary" onClick={() => setModalOpen(false)}>
+            <button type="button" className="btn-secondary" onClick={resetModal}>
               Cancelar
             </button>
             <button type="submit" className="btn-primary" disabled={saving}>

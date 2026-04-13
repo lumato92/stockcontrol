@@ -95,3 +95,32 @@ export interface TokenResponse {
   refresh_token: string
   token_type: string
 }
+
+
+ 
+export type LocationType = 'zone' | 'aisle' | 'rack' | 'level' | 'cell'
+export type DispatchRule = 'FIFO' | 'FEFO' | 'LIFO'
+ 
+export interface WarehouseLocation {
+  id: string
+  warehouse_id: string
+  parent_id: string | null
+  location_type: LocationType
+  code: string
+  name: string | null
+  max_weight_kg: number | null
+  allows_cold: boolean
+  allows_hazardous: boolean
+  is_active: boolean
+  created_at: string
+}
+ 
+export interface ProductUnitConversion {
+  id: number
+  product_id: string
+  from_unit_id: number
+  to_unit_id: number
+  factor: number
+  is_active: boolean
+}
+ 

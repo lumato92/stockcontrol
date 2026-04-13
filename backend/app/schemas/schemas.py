@@ -207,3 +207,75 @@ class PaginatedResponse(BaseModel):
     page: int
     pages: int
     size: int
+
+
+     
+# ── Product Unit Conversions ──────────────────────────────────────────────────
+ 
+class ConversionCreate(BaseModel):
+    from_unit_id: int
+    to_unit_id: int
+    factor: Decimal
+ 
+    @field_validator("factor")
+    @classmethod
+    def factor_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError("El factor debe ser mayor a cero")
+        return v
+ 
+ 
+class ConversionOut(BaseModel):
+    id: int
+    product_id: str
+    from_unit_id: int
+    to_unit_id: int
+    factor: Decimal
+    is_active: bool
+ 
+    class Config:
+        from_attributes = True
+
+# ── Warehouse Locations ───────────────────────────────────────────────────────
+ 
+class LocationCreate(BaseModel):
+    code: str
+    name: Optional[str] = None
+    location_type: LocationTypeEnum
+    parent_id: Optional[str] = None
+    max_weight_kg: Optional[Decimal] = None
+    allows_cold: bool = False
+    allows_hazardous: bool = False
+ 
+    @field_validator("parent_id", "name", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v == "" or v == " ":
+            return None
+        return v
+ 
+ 
+class LocationPatch(BaseModel):
+    is_active: Optional[bool] = None
+    name: Optional[str] = None
+    max_weight_kg: Optional[Decimal] = None
+    allows_cold: Optional[bool] = None
+    allows_hazardous: Optional[bool] = None
+ 
+ 
+class LocationOut(BaseModel):
+    id: str
+    warehouse_id: str
+    parent_id: Optional[str]
+    location_type: LocationTypeEnum
+    code: str
+    name: Optional[str]
+    max_weight_kg: Optional[Decimal]
+    allows_cold: bool
+    allows_hazardous: bool
+    is_active: bool
+    created_at: datetime
+ 
+    class Config:
+        from_attributes = True
+ 

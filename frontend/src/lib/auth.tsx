@@ -38,6 +38,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (data.must_change_password) {
       navigate('/cambiar-password', { replace: true })
+    } else {
+      navigate('/', { replace: true })
     }
   }
 

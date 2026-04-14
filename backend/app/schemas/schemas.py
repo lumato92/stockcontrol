@@ -16,6 +16,7 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -30,6 +31,7 @@ class UserCreate(BaseModel):
     password: str
     full_name: Optional[str] = None
     role: RoleEnum = RoleEnum.viewer
+    must_change_password: bool = True
 
 
 class UserUpdate(BaseModel):
@@ -45,6 +47,9 @@ class UserOut(BaseModel):
     full_name: Optional[str]
     role: RoleEnum
     is_active: bool
+    must_change_password: bool          
+    failed_login_attempts: int          
+    locked_until: Optional[datetime]    
     created_at: datetime
     last_login: Optional[datetime]
 

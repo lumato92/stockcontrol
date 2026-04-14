@@ -11,6 +11,7 @@ import DepositosPage from '@/pages/DepositosPage'
 import UsersPage from '@/pages/UsersPage'
 import { Spinner } from '@/components/ui'
 import WarehouseDetailPage from '@/pages/WarehouseDetailPage'
+import ChangePasswordPage from '@/pages/ChangePasswordPage'
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -23,7 +24,6 @@ const qc = new QueryClient({
 
 function ProtectedLayout() {
   const { user, loading } = useAuth()
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -31,9 +31,8 @@ function ProtectedLayout() {
       </div>
     )
   }
-
   if (!user) return <Navigate to="/login" replace />
-
+  if (user.must_change_password) return <Navigate to="/cambiar-password" replace />  // ← agregar
   return (
     <div className="flex min-h-screen bg-slate-50">
       <Sidebar />
@@ -59,15 +58,18 @@ function SupervisorOnly() {
 export default function App() {
   return (
     <QueryClientProvider client={qc}>
-      <AuthProvider>
+      
         <BrowserRouter>
+        <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/cambiar-password" element={<ChangePasswordPage />} />
             <Route element={<ProtectedLayout />}>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/productos" element={<ProductsPage />} />
               <Route path="/stock" element={<StockPage />} />
               <Route path="/movimientos" element={<MovimientosPage />} />
+
               <Route element={<SupervisorOnly />}>
                 <Route path="/depositos/:id" element={<WarehouseDetailPage />} />
                 <Route path="/depositos" element={<DepositosPage />} />
@@ -78,8 +80,9 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </AuthProvider>
         </BrowserRouter>
-      </AuthProvider>
+     
     </QueryClientProvider>
   )
 }

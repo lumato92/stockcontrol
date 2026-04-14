@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
 import type { User } from '@/types'
 
@@ -14,6 +15,7 @@ const AuthContext = createContext<AuthCtx | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
 
   useEffect(() => {
     const token = localStorage.getItem('access_token')
@@ -33,12 +35,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('refresh_token', data.refresh_token)
     const me = await api.get('/auth/me')
     setUser(me.data)
+
+    if (data.must_change_password) {
+      navigate('/cambiar-password', { replace: true })
+    }
   }
 
   const logout = () => {
-    api.post('/auth/logout').catch(() => {})
+    const refresh_token = localStorage.getItem('refresh_token')
+    if (refresh_token) {
+      api.post('/auth/logout', { refresh_token }).catch(() => {})
+    }
     localStorage.clear()
     setUser(null)
+    navigate('/login', { replace: true })
   }
 
   return (

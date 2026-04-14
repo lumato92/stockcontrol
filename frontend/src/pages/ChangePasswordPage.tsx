@@ -31,7 +31,7 @@ export default function ChangePasswordPage() {
         new_password: d.new_password,
       })
       // Refrescar el usuario para que must_change_password quede false
-      navigate('/', { replace: true })
+      logout()
     } catch (e: any) {
       setError(e?.response?.data?.detail ?? 'Error al cambiar la contraseña')
     } finally {

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/lib/api'
 import type { User } from '@/types'
@@ -34,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('access_token', data.access_token)
     localStorage.setItem('refresh_token', data.refresh_token)
     const me = await api.get('/auth/me')
-    setUser(me.data)
+    flushSync(() => setUser(me.data))
 
     if (data.must_change_password) {
       navigate('/cambiar-password', { replace: true })

@@ -8,8 +8,9 @@ import {
 } from '@/components/ui'
 import { formatCurrency, canWrite } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
-import { Plus, Search, Pencil, ToggleLeft, ToggleRight, ScanLine, ChevronDown, X } from 'lucide-react'
+import { Plus, Search, Pencil, ToggleLeft, ToggleRight, ScanLine, ChevronDown, X, Printer } from 'lucide-react'
 import type { Product, Category, Unit, PaginatedResponse, ProductUnitConversion } from '@/types'
+import LabelModal from '@/components/LabelModal'
 
 type DispatchRule = 'FIFO' | 'FEFO' | 'LIFO'
 
@@ -34,6 +35,7 @@ export default function ProductsPage() {
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [labelProduct, setLabelProduct] = useState<Product | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [newConv, setNewConv] = useState<{ from_unit_id: string; to_unit_id: string; factor: string }>({
     from_unit_id: '', to_unit_id: '', factor: ''
@@ -218,7 +220,7 @@ export default function ProductsPage() {
                   <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500">Stock mín.</th>
                   <th className="text-right px-4 py-2.5 text-xs font-medium text-slate-500">Precio costo</th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-slate-500">Estado</th>
-                  {canWrite(user?.role ?? '') && <th className="px-4 py-2.5" />}
+                  <th className="px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -250,25 +252,34 @@ export default function ProductsPage() {
                         {p.is_active ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    {canWrite(user?.role ?? '') && (
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5 justify-end">
-                          <button
-                            className="btn-secondary py-1 px-2 text-xs"
-                            onClick={() => openEdit(p)}
-                          >
-                            <Pencil size={11} /> Editar
-                          </button>
-                          <button
-                            className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400"
-                            title={p.is_active ? 'Desactivar' : 'Activar'}
-                            onClick={() => toggleMut.mutate({ id: p.id, is_active: !p.is_active })}
-                          >
-                            {p.is_active ? <ToggleRight size={14} className="text-green-500" /> : <ToggleLeft size={14} />}
-                          </button>
-                        </div>
-                      </td>
-                    )}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        <button
+                          className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400"
+                          title="Imprimir etiqueta"
+                          onClick={() => setLabelProduct(p)}
+                        >
+                          <Printer size={13} />
+                        </button>
+                        {canWrite(user?.role ?? '') && (
+                          <>
+                            <button
+                              className="btn-secondary py-1 px-2 text-xs"
+                              onClick={() => openEdit(p)}
+                            >
+                              <Pencil size={11} /> Editar
+                            </button>
+                            <button
+                              className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-400"
+                              title={p.is_active ? 'Desactivar' : 'Activar'}
+                              onClick={() => toggleMut.mutate({ id: p.id, is_active: !p.is_active })}
+                            >
+                              {p.is_active ? <ToggleRight size={14} className="text-green-500" /> : <ToggleLeft size={14} />}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -518,6 +529,10 @@ export default function ProductsPage() {
           </div>
         </form>
       </Modal>
+
+      {labelProduct && (
+        <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />
+      )}
     </div>
   )
 }

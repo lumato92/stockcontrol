@@ -19,7 +19,7 @@ from app.schemas.schemas import (
 )
 from app.api.v1.deps import get_current_user, require_operator_or_above, require_admin_supervisor
 
-_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "app", "templates")
+_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "templates")
 _jinja_env = Environment(loader=FileSystemLoader(_TEMPLATES_DIR), autoescape=True)
 
 _MOVEMENT_LABELS = {

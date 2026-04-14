@@ -1,9 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
+import os
+from jinja2 import Environment, FileSystemLoader
+import weasyprint
 from app.db.session import get_db
 from app.models.models import (
     StockMovement, CurrentStock, Product, Warehouse, WarehouseLocation,
@@ -14,6 +18,24 @@ from app.schemas.schemas import (
     PaginatedResponse
 )
 from app.api.v1.deps import get_current_user, require_operator_or_above, require_admin_supervisor
+
+_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "app", "templates")
+_jinja_env = Environment(loader=FileSystemLoader(_TEMPLATES_DIR), autoescape=True)
+
+_MOVEMENT_LABELS = {
+    "entrada":       "Entrada",
+    "salida":        "Salida",
+    "transferencia": "Transferencia",
+    "ajuste":        "Ajuste",
+    "devolucion":    "Devolución",
+}
+_MOVEMENT_COLORS = {
+    "entrada":       "#166534",
+    "salida":        "#991b1b",
+    "transferencia": "#1e40af",
+    "ajuste":        "#92400e",
+    "devolucion":    "#6b21a8",
+}
 
 router_movements = APIRouter()
 router_stock     = APIRouter()
@@ -269,6 +291,114 @@ def create_movement(
     db.add(log)
     db.commit()
     return _load_movement(movement.id, db)
+
+
+@router_movements.get("/export/pdf")
+def export_movements_pdf(
+    from_date:      Optional[date] = Query(None),
+    to_date:        Optional[date] = Query(None),
+    product_id:     Optional[str]  = Query(None),
+    warehouse_id:   Optional[str]  = Query(None),
+    movement_type:  Optional[MovementTypeEnum] = Query(None),
+    db:             Session = Depends(get_db),
+    current_user:   User    = Depends(get_current_user),
+):
+    q = db.query(StockMovement).options(
+        joinedload(StockMovement.product).joinedload(Product.unit),
+        joinedload(StockMovement.performed_by_user),
+        joinedload(StockMovement.from_location).joinedload(WarehouseLocation.warehouse),
+        joinedload(StockMovement.to_location).joinedload(WarehouseLocation.warehouse),
+    )
+
+    if product_id:
+        q = q.filter(StockMovement.product_id == product_id)
+    if warehouse_id:
+        loc_ids = db.query(WarehouseLocation.id).filter(
+            WarehouseLocation.warehouse_id == warehouse_id
+        ).subquery()
+        q = q.filter(
+            (StockMovement.from_location_id.in_(loc_ids)) |
+            (StockMovement.to_location_id.in_(loc_ids))
+        )
+    if movement_type:
+        q = q.filter(StockMovement.movement_type == movement_type)
+    if from_date:
+        q = q.filter(StockMovement.performed_at >= datetime.combine(from_date, datetime.min.time()))
+    if to_date:
+        q = q.filter(StockMovement.performed_at <= datetime.combine(to_date, datetime.max.time()))
+
+    movements = q.order_by(StockMovement.performed_at.desc()).all()
+
+    # Resolver nombres para filtros en encabezado
+    warehouse_name = None
+    if warehouse_id:
+        wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+        warehouse_name = wh.name if wh else None
+
+    product_name = None
+    if product_id:
+        p = db.query(Product).filter(Product.id == product_id).first()
+        product_name = p.name if p else None
+
+    # Construir filas para la plantilla
+    rows = []
+    for m in movements:
+        rows.append({
+            "performed_at":     m.performed_at.strftime("%d/%m/%Y %H:%M"),
+            "movement_type":    m.movement_type.value,
+            "movement_type_label": _MOVEMENT_LABELS.get(m.movement_type.value, m.movement_type.value),
+            "is_reversal":      m.is_reversal,
+            "product_name":     m.product.name,
+            "product_sku":      m.product.sku,
+            "from_location":    m.from_location.code if m.from_location else None,
+            "to_location":      m.to_location.code   if m.to_location   else None,
+            "quantity":         f"{m.quantity:g}",
+            "unit":             m.product.unit.symbol if m.product.unit else "",
+            "reference_doc":    m.reference_doc,
+            "user":             m.performed_by_user.full_name or m.performed_by_user.username,
+        })
+
+    # Resumen por tipo
+    summary: dict = {}
+    for r in rows:
+        t = r["movement_type"]
+        if t not in summary:
+            summary[t] = {"count": 0, "label": _MOVEMENT_LABELS.get(t, t), "color": _MOVEMENT_COLORS.get(t, "#1e293b")}
+        summary[t]["count"] += 1
+
+    filters = {
+        "from_date":     from_date.strftime("%d/%m/%Y") if from_date else None,
+        "to_date":       to_date.strftime("%d/%m/%Y")   if to_date   else None,
+        "movement_type": _MOVEMENT_LABELS.get(movement_type.value, movement_type.value) if movement_type else None,
+        "warehouse_name": warehouse_name,
+        "product_name":   product_name,
+    }
+
+    # Auditoría
+    db.add(AuditLog(
+        user_id=current_user.id, action="EXPORT",
+        table_name="stock_movements",
+        description=f"PDF exportado: {len(rows)} movimientos",
+    ))
+    db.commit()
+
+    # Renderizar HTML y convertir a PDF
+    template = _jinja_env.get_template("movements_report.html")
+    html = template.render(
+        movements=rows,
+        summary=summary,
+        filters=filters,
+        generated_at=datetime.now().strftime("%d/%m/%Y %H:%M"),
+    )
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+
+    filename = f"movimientos_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router_movements.get("/", response_model=PaginatedResponse)

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 10px; color: #1e293b; }
+
+  .header { padding: 20px 24px 12px; border-bottom: 2px solid #2563eb; }
+  .header-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-icon { width: 32px; height: 32px; background: #2563eb; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; }
+  .brand-name { font-size: 16px; font-weight: 700; color: #1e293b; }
+  .brand-sub  { font-size: 9px; color: #64748b; }
+  .report-meta { text-align: right; color: #64748b; font-size: 9px; line-height: 1.6; }
+
+  .filters { padding: 8px 24px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+    display: flex; gap: 20px; flex-wrap: wrap; }
+  .filter-item { font-size: 9px; color: #475569; }
+  .filter-item strong { color: #1e293b; }
+
+  .content { padding: 16px 24px; }
+  .section-title { font-size: 11px; font-weight: 600; color: #1e293b; margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: #1e40af; color: white; }
+  thead th { padding: 6px 8px; text-align: left; font-size: 9px; font-weight: 600; white-space: nowrap; }
+  thead th.right { text-align: right; }
+  tbody tr { border-bottom: 1px solid #f1f5f9; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody td { padding: 5px 8px; font-size: 9px; vertical-align: middle; }
+  tbody td.right { text-align: right; font-weight: 600; }
+  tbody td.mono { font-family: monospace; font-size: 8px; color: #64748b; }
+  tbody td.muted { color: #94a3b8; }
+
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 8px; font-weight: 600; }
+  .badge-entrada      { background: #dcfce7; color: #166534; }
+  .badge-salida       { background: #fee2e2; color: #991b1b; }
+  .badge-transferencia{ background: #dbeafe; color: #1e40af; }
+  .badge-ajuste       { background: #fef3c7; color: #92400e; }
+  .badge-devolucion   { background: #f3e8ff; color: #6b21a8; }
+  .reversal-note      { font-size: 7px; color: #94a3b8; font-style: italic; }
+
+  .summary { margin-top: 20px; }
+  .summary-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+  .summary-card { flex: 1; min-width: 100px; padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #e2e8f0; }
+  .summary-card .count { font-size: 18px; font-weight: 700; }
+  .summary-card .label { font-size: 8px; color: #64748b; margin-top: 2px; }
+  .summary-card.total { background: #eff6ff; border-color: #bfdbfe; }
+  .summary-card.total .count { color: #1e40af; }
+
+  .footer { position: fixed; bottom: 0; left: 0; right: 0;
+    padding: 6px 24px; border-top: 1px solid #e2e8f0; background: white;
+    display: flex; justify-content: space-between; font-size: 8px; color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="brand">
+      <div class="brand-icon">📦</div>
+      <div>
+        <div class="brand-name">StockControl</div>
+        <div class="brand-sub">Sistema de gestión de inventario</div>
+      </div>
+    </div>
+    <div class="report-meta">
+      <div><strong>Reporte de Movimientos</strong></div>
+      <div>Generado: {{ generated_at }}</div>
+      <div>Total de registros: {{ movements|length }}</div>
+    </div>
+  </div>
+</div>
+
+{% if filters %}
+<div class="filters">
+  {% if filters.from_date %}<div class="filter-item">Desde: <strong>{{ filters.from_date }}</strong></div>{% endif %}
+  {% if filters.to_date %}<div class="filter-item">Hasta: <strong>{{ filters.to_date }}</strong></div>{% endif %}
+  {% if filters.movement_type %}<div class="filter-item">Tipo: <strong>{{ filters.movement_type }}</strong></div>{% endif %}
+  {% if filters.warehouse_name %}<div class="filter-item">Depósito: <strong>{{ filters.warehouse_name }}</strong></div>{% endif %}
+  {% if filters.product_name %}<div class="filter-item">Producto: <strong>{{ filters.product_name }}</strong></div>{% endif %}
+</div>
+{% endif %}
+
+<div class="content">
+  <div class="section-title">Detalle de movimientos</div>
+
+  {% if movements %}
+  <table>
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Tipo</th>
+        <th>Producto</th>
+        <th>SKU</th>
+        <th>Origen → Destino</th>
+        <th class="right">Cantidad</th>
+        <th>Referencia</th>
+        <th>Usuario</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movements %}
+      <tr>
+        <td class="mono">{{ m.performed_at }}</td>
+        <td>
+          <span class="badge badge-{{ m.movement_type }}">{{ m.movement_type_label }}</span>
+          {% if m.is_reversal %}<br><span class="reversal-note">reversión</span>{% endif %}
+        </td>
+        <td>{{ m.product_name }}</td>
+        <td class="mono">{{ m.product_sku }}</td>
+        <td class="mono">
+          {% if m.from_location %}{{ m.from_location }}{% endif %}
+          {% if m.from_location and m.to_location %} → {% endif %}
+          {% if m.to_location %}{{ m.to_location }}{% endif %}
+          {% if not m.from_location and not m.to_location %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="right">{{ m.quantity }} {{ m.unit }}</td>
+        <td class="muted">{{ m.reference_doc or '—' }}</td>
+        <td>{{ m.user }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#94a3b8; font-style:italic; padding: 16px 0;">
+    No hay movimientos que coincidan con los filtros seleccionados.
+  </p>
+  {% endif %}
+
+  <div class="summary">
+    <div class="section-title">Resumen</div>
+    <div class="summary-grid">
+      <div class="summary-card total">
+        <div class="count">{{ movements|length }}</div>
+        <div class="label">Total movimientos</div>
+      </div>
+      {% for key, info in summary.items() %}
+      <div class="summary-card">
+        <div class="count" style="color: {{ info.color }}">{{ info.count }}</div>
+        <div class="label">{{ info.label }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <span>StockControl — Reporte de Movimientos</span>
+  <span>{{ generated_at }}</span>
+</div>
+
+</body>
+</html>

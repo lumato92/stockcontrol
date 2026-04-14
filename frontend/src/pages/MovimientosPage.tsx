@@ -9,7 +9,7 @@ import {
 } from '@/components/ui'
 import { formatDate, formatQty, MOVEMENT_LABELS, canWrite } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
-import { Plus, RotateCcw } from 'lucide-react'
+import { Plus, RotateCcw, FileDown } from 'lucide-react'
 import type { Movement, Product, Warehouse, PaginatedResponse, WarehouseLocation } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -106,11 +106,44 @@ export default function MovimientosPage() {
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [warehouseFilter, setWarehouseFilter] = useState<string>('')
   const [productFilter, setProductFilter] = useState<string>(searchParams.get('product_id') ?? '')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [exporting, setExporting] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [reverseTarget, setReverseTarget] = useState<Movement | null>(null)
   const [reverseNotes, setReverseNotes] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+
+  const handleExportPdf = async () => {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      if (fromDate)        params.set('from_date', fromDate)
+      if (toDate)          params.set('to_date', toDate)
+      if (typeFilter)      params.set('movement_type', typeFilter)
+      if (warehouseFilter) params.set('warehouse_id', warehouseFilter)
+      if (productFilter)   params.set('product_id', productFilter)
+
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/v1/movements/export/pdf?${params}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      if (!res.ok) throw new Error('Error al generar el PDF')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `movimientos_${new Date().toISOString().slice(0, 10)}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('No se pudo generar el PDF. Intentá de nuevo.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const { data, isLoading } = useQuery<PaginatedResponse<Movement>>({
     queryKey: ['movements', page, typeFilter, warehouseFilter, productFilter],
@@ -210,14 +243,37 @@ export default function MovimientosPage() {
           <option value="">Todos los productos</option>
           {products?.items.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        {(typeFilter || warehouseFilter || productFilter) && (
+        <input
+          type="date"
+          className="input w-auto"
+          value={fromDate}
+          onChange={e => setFromDate(e.target.value)}
+          title="Fecha desde"
+        />
+        <input
+          type="date"
+          className="input w-auto"
+          value={toDate}
+          onChange={e => setToDate(e.target.value)}
+          title="Fecha hasta"
+        />
+        {(typeFilter || warehouseFilter || productFilter || fromDate || toDate) && (
           <button
             className="btn-secondary text-xs"
-            onClick={() => { setTypeFilter(''); setWarehouseFilter(''); setProductFilter(''); setPage(1) }}
+            onClick={() => { setTypeFilter(''); setWarehouseFilter(''); setProductFilter(''); setFromDate(''); setToDate(''); setPage(1) }}
           >
             Limpiar filtros
           </button>
         )}
+        <button
+          className="btn-secondary text-xs"
+          onClick={handleExportPdf}
+          disabled={exporting}
+          title="Exportar a PDF con los filtros actuales"
+        >
+          {exporting ? <Spinner size={12} /> : <FileDown size={13} />}
+          {exporting ? 'Generando...' : 'Exportar PDF'}
+        </button>
       </div>
 
       {/* Table */}

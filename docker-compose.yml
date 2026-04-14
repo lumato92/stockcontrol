@@ -32,6 +32,14 @@ services:
       FIRST_ADMIN_PASSWORD: ${FIRST_ADMIN_PASSWORD}
       FIRST_ADMIN_NAME: ${FIRST_ADMIN_NAME:-Administrador}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-StockControl}
+      APP_URL: ${APP_URL:-http://localhost}
     depends_on:
       db:
         condition: service_healthy

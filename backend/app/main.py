@@ -25,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 PREFIX = settings.API_V1_STR
 
 app.include_router(auth_router, prefix=f"{PREFIX}/auth", tags=["Autenticación"])

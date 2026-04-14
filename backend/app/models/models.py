@@ -60,9 +60,14 @@ class User(Base):
     is_active       = Column(Boolean, default=True)
     last_login      = Column(DateTime, nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
+    must_change_password  = Column(Boolean, default=False)
+    failed_login_attempts = Column(Integer, default=0)
+    locked_until          = Column(DateTime, nullable=True)
 
     movements  = relationship("StockMovement", back_populates="performed_by_user", foreign_keys="StockMovement.performed_by")
     audit_logs = relationship("AuditLog", back_populates="user")
+    reset_codes = relationship("PasswordResetCode", back_populates="user")
+    sessions    = relationship("UserSession", back_populates="user")
 
 
 # ── Catálogo ──────────────────────────────────────────────────────────────────
@@ -241,3 +246,33 @@ class AuditLog(Base):
     occurred_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="audit_logs")
+
+
+
+class PasswordResetCode(Base):
+    __tablename__ = "password_reset_codes"
+ 
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    user_id    = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    code_hash  = Column(String(255), nullable=False)   # bcrypt del código de 6 dígitos
+    expires_at = Column(DateTime, nullable=False)
+    used       = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+ 
+    user = relationship("User", back_populates="reset_codes")
+ 
+ 
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+ 
+    id           = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    user_id      = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    token_hash   = Column(String(255), nullable=False, index=True)  # SHA-256 del refresh token
+    ip_address   = Column(String(45), nullable=True)
+    user_agent   = Column(Text, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    last_used    = Column(DateTime, default=datetime.utcnow)
+    revoked      = Column(Boolean, default=False)
+    revoked_at   = Column(DateTime, nullable=True)
+ 
+    user = relationship("User", back_populates="sessions")

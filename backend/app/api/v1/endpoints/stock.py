@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
+from fpdf import FPDF
 from app.db.session import get_db
 from app.models.models import (
     StockMovement, CurrentStock, Product, Warehouse, WarehouseLocation,
@@ -14,6 +16,21 @@ from app.schemas.schemas import (
     PaginatedResponse
 )
 from app.api.v1.deps import get_current_user, require_operator_or_above, require_admin_supervisor
+
+_MOVEMENT_LABELS = {
+    "entrada":       "Entrada",
+    "salida":        "Salida",
+    "transferencia": "Transferencia",
+    "ajuste":        "Ajuste",
+    "devolucion":    "Devolucion",
+}
+_MOVEMENT_COLORS = {
+    "entrada":       (22, 101, 52),
+    "salida":        (153, 27, 27),
+    "transferencia": (30, 64, 175),
+    "ajuste":        (146, 64, 14),
+    "devolucion":    (107, 33, 168),
+}
 
 router_movements = APIRouter()
 router_stock     = APIRouter()
@@ -269,6 +286,159 @@ def create_movement(
     db.add(log)
     db.commit()
     return _load_movement(movement.id, db)
+
+
+@router_movements.get("/export/pdf")
+def export_movements_pdf(
+    from_date:      Optional[date] = Query(None),
+    to_date:        Optional[date] = Query(None),
+    product_id:     Optional[str]  = Query(None),
+    warehouse_id:   Optional[str]  = Query(None),
+    movement_type:  Optional[MovementTypeEnum] = Query(None),
+    db:             Session = Depends(get_db),
+    current_user:   User    = Depends(get_current_user),
+):
+    q = db.query(StockMovement).options(
+        joinedload(StockMovement.product).joinedload(Product.unit),
+        joinedload(StockMovement.performed_by_user),
+        joinedload(StockMovement.from_location),
+        joinedload(StockMovement.to_location),
+    )
+
+    if product_id:
+        q = q.filter(StockMovement.product_id == product_id)
+    if warehouse_id:
+        loc_ids = db.query(WarehouseLocation.id).filter(
+            WarehouseLocation.warehouse_id == warehouse_id
+        ).subquery()
+        q = q.filter(
+            (StockMovement.from_location_id.in_(loc_ids)) |
+            (StockMovement.to_location_id.in_(loc_ids))
+        )
+    if movement_type:
+        q = q.filter(StockMovement.movement_type == movement_type)
+    if from_date:
+        q = q.filter(StockMovement.performed_at >= datetime.combine(from_date, datetime.min.time()))
+    if to_date:
+        q = q.filter(StockMovement.performed_at <= datetime.combine(to_date, datetime.max.time()))
+
+    movements = q.order_by(StockMovement.performed_at.desc()).all()
+
+    # Nombres para encabezado de filtros
+    warehouse_name = None
+    if warehouse_id:
+        wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+        warehouse_name = wh.name if wh else None
+    product_name = None
+    if product_id:
+        pr = db.query(Product).filter(Product.id == product_id).first()
+        product_name = pr.name if pr else None
+
+    # Auditoría
+    db.add(AuditLog(
+        user_id=current_user.id, action="EXPORT",
+        table_name="stock_movements",
+        description=f"PDF exportado: {len(movements)} movimientos",
+    ))
+    db.commit()
+
+    # ── Generar PDF con fpdf2 ─────────────────────────────────────────────────
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+
+    # Encabezado
+    pdf.set_fill_color(37, 99, 235)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "StockControl - Reporte de Movimientos", new_x="LMARGIN", new_y="NEXT", fill=True, align="C")
+
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(100, 116, 139)
+    meta_parts = [f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+                  f"Total: {len(movements)} movimientos"]
+    if from_date:   meta_parts.append(f"Desde: {from_date.strftime('%d/%m/%Y')}")
+    if to_date:     meta_parts.append(f"Hasta: {to_date.strftime('%d/%m/%Y')}")
+    if movement_type: meta_parts.append(f"Tipo: {_MOVEMENT_LABELS.get(movement_type.value, movement_type.value)}")
+    if warehouse_name: meta_parts.append(f"Deposito: {warehouse_name}")
+    if product_name:   meta_parts.append(f"Producto: {product_name}")
+    pdf.set_fill_color(248, 250, 252)
+    pdf.cell(0, 6, "   " + "   |   ".join(meta_parts), new_x="LMARGIN", new_y="NEXT", fill=True)
+    pdf.ln(2)
+
+    # Cabecera de tabla
+    COL_W = [32, 24, 52, 22, 36, 22, 28, 42]
+    HEADERS = ["Fecha", "Tipo", "Producto", "SKU", "Origen -> Destino", "Cantidad", "Referencia", "Usuario"]
+    pdf.set_fill_color(30, 64, 175)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 7)
+    for w, h in zip(COL_W, HEADERS):
+        pdf.cell(w, 7, h, border=0, fill=True, align="C")
+    pdf.ln()
+
+    # Filas
+    pdf.set_font("Helvetica", "", 7)
+    fill = False
+    summary: dict = {}
+    for m in movements:
+        mtype = m.movement_type.value
+        label = _MOVEMENT_LABELS.get(mtype, mtype)
+        color = _MOVEMENT_COLORS.get(mtype, (30, 41, 59))
+        from_loc = m.from_location.code if m.from_location else ""
+        to_loc   = m.to_location.code   if m.to_location   else ""
+        location_str = f"{from_loc} -> {to_loc}" if from_loc and to_loc else (from_loc or to_loc or "-")
+        qty_str  = f"{m.quantity:g} {m.product.unit.symbol if m.product.unit else ''}"
+        user_str = (m.performed_by_user.full_name or m.performed_by_user.username)[:20]
+        ref_str  = (m.reference_doc or "-")[:14]
+        sku_str  = m.product.sku[:12]
+        prod_str = m.product.name[:28] + ("+" if len(m.product.name) > 28 else "")
+        date_str = m.performed_at.strftime("%d/%m/%Y %H:%M")
+
+        bg = (248, 250, 252) if fill else (255, 255, 255)
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(30, 41, 59)
+
+        row_data = [date_str, label, prod_str, sku_str, location_str, qty_str, ref_str, user_str]
+        for i, (w, val) in enumerate(zip(COL_W, row_data)):
+            if i == 1:  # columna Tipo con color
+                pdf.set_text_color(*color)
+                pdf.cell(w, 6, val, border=0, fill=True, align="C")
+                pdf.set_text_color(30, 41, 59)
+            elif i in (5,):  # cantidad alineada a la derecha
+                pdf.cell(w, 6, val, border=0, fill=True, align="R")
+            else:
+                pdf.cell(w, 6, val, border=0, fill=True)
+        pdf.ln()
+        fill = not fill
+
+        if mtype not in summary:
+            summary[mtype] = {"label": label, "count": 0}
+        summary[mtype]["count"] += 1
+
+    # Línea separadora
+    pdf.ln(3)
+    pdf.set_draw_color(226, 232, 240)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+    pdf.ln(3)
+
+    # Resumen
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(30, 41, 59)
+    pdf.cell(0, 5, "Resumen", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(40, 5, f"Total movimientos: {len(movements)}", new_x="LMARGIN", new_y="NEXT")
+    for mtype, info in summary.items():
+        color = _MOVEMENT_COLORS.get(mtype, (30, 41, 59))
+        pdf.set_text_color(*color)
+        pdf.cell(40, 5, f"  {info['label']}: {info['count']}", new_x="LMARGIN", new_y="NEXT")
+
+    pdf_bytes = bytes(pdf.output())
+    filename = f"movimientos_{datetime.now().strftime('%Y-%m-%d')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router_movements.get("/", response_model=PaginatedResponse)
